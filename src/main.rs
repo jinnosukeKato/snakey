@@ -8,10 +8,7 @@ use esp_idf_svc::hal::{
     i2s::I2sDriver,
     peripherals::Peripherals,
 };
-use pitch_detector::{
-    note::{detect_note, detect_note_in_range},
-    pitch::PowerCepstrum,
-};
+use pitch_detector::{note::detect_note_in_range, pitch::HannedFftDetector};
 
 fn main() {
     // It is necessary to call this function once. Otherwise, some patches to the runtime
@@ -46,52 +43,67 @@ fn main() {
         .rx_enable()
         .expect("Failed to enable I2S RX channel");
 
-    const BUFFER_SIZE: usize = 1024 * 4;
-    let mut buffer = [0u8; BUFFER_SIZE];
-    let mut detector = PowerCepstrum::default();
-    loop {
-        let bytes_read = pdm_driver
-            .read(&mut buffer, esp_idf_svc::hal::delay::BLOCK.into())
-            .expect("Failed to read from I2S");
+    // バッファの設定
+    const BUFFER_SIZE: usize = 1024 * 4; // 4096 バイト = 2048 サンプル (16kHzで約128ms)
+    let mut buffer = vec![0u8; BUFFER_SIZE]; // スタックオーバーフローを避けるためVecでヒープ領域（RAM）に確保
 
-        if bytes_read == 0 {
-            println!("Zero bytes read!");
-            continue;
+    // 人間の音声，笛に適した検出器として，Hann窓をかけたFFTベースのピッチ検出器を用いる
+    let mut detector = HannedFftDetector::default();
+
+    // メインループ
+    loop {
+        // バッファがいっぱいになるまで継続的にチャンクを受信する
+        let mut total_read = 0;
+        while total_read < BUFFER_SIZE {
+            let bytes_read = pdm_driver
+                .read(
+                    &mut buffer[total_read..],
+                    esp_idf_svc::hal::delay::BLOCK.into(),
+                )
+                .expect("Failed to read from I2S");
+            total_read += bytes_read;
         }
 
         // 16bit(2バイト)のリトルエンディアンPCMデータとして解釈してf64に変換
-        // PDMの音声が内部チップで16bit PCMに変換されている...はず
-        let mut buff_f64 = buffer[..bytes_read]
+        // PDMの音声データが内部チップで16bit PCMに変換されている
+        let mut buff_f64 = buffer
             .chunks_exact(2)
-            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]) as f64)
+            .map(|chunk| {
+                // XIAO ESP32S3のマイクは音が小さい傾向があるため、入力時点でデジタル的にゲインをかける(x4倍)
+                // 各種ピッチ計算ライブラリが想定しやすいように、最大振幅を基準に [-1.0, 1.0] に正規化
+                let val = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
+                (val * 4.0) / 32768.0
+            })
             .collect::<Vec<f64>>();
 
-        // PDMマイク特有の巨大なDCオフセット(直流成分)を除去
+        // PDMマイク特有のDCオフセットを除去
         let mean = buff_f64.iter().sum::<f64>() / buff_f64.len() as f64;
         for x in &mut buff_f64 {
             *x -= mean;
         }
 
-        // AC成分のRMSを計算
+        // マイクの入力レベル確認用RMS 範囲 [-1.0, 1.0]
         let rms = (buff_f64.iter().map(|&x| x * x).sum::<f64>() / buff_f64.len() as f64).sqrt();
+        println!("RMS: {:.4}", rms);
 
-        // 実際のRMS値を表示して、マイクの入力レベルを確認します
-        // 音を出した時と無音時の数値を比較して、下の threshold を決めてください
-        println!("RMS: {:.2}", rms);
-        let threshold = 100.0; // 表示されたRMS値を参考にここを調整
-
+        let threshold = 0.01; // 無音判断用RMS閾値
         if rms > threshold {
             match detect_note_in_range(
                 &buff_f64,
                 &mut detector,
                 SAMPLE_RATE as f64,
                 Range {
-                    start: 20.0,
-                    end: 5000.0,
+                    start: 60.0,
+                    end: 2000.0,
                 },
             ) {
-                Some(note) => println!("Detected freq: {:?}", note.actual_freq),
-                None => println!("No note detected"),
+                Some(note) => println!(
+                    "Detected note: {:?}, freq: {:.2}Hz",
+                    note.note_name, note.actual_freq
+                ),
+                None => {
+                    println!("Pitch was not detected")
+                }
             }
         } else {
             println!("Silence...");
