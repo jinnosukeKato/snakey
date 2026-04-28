@@ -14,15 +14,18 @@ mod keyboard;
 use keyboard::Keyboard;
 
 fn main() {
-    // It is necessary to call this function once. Otherwise, some patches to the runtime
-    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_svc::sys::link_patches();
-
-    // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
+    log::info!("Startup Snakey!");
 
-    log::info!("Startup");
+    // BLEキーボードの初期化
+    let mut keyboard = Keyboard::new().expect("Failed to initialize BLE keyboard");
+    log::info!("BLE keyboard initialized, waiting for connection...");
 
+    // 人間の音声，笛に適した検出器として，Hann窓をかけたFFTベースのピッチ検出器を用いる
+    let mut detector = HannedFftDetector::default();
+
+    // ペリフェラルの取得
     let peripherals = Peripherals::take().expect("Failed to take peripherals");
 
     // PDMマイクの初期化
@@ -38,6 +41,7 @@ fn main() {
             ),
             PdmRxGpioConfig::default(),
         ),
+        // pin assign; ref. https://wiki.seeedstudio.com/xiao_esp32s3_sense_mic/
         peripherals.pins.gpio42, // PDM_CLK
         peripherals.pins.gpio41, // PDM_DATA
     )
@@ -47,15 +51,11 @@ fn main() {
         .rx_enable()
         .expect("Failed to enable I2S RX channel");
 
-    // BLEキーボードの初期化
-    let mut keyboard = Keyboard::new().expect("Failed to initialize BLE keyboard");
-
     // バッファの設定
     const BUFFER_SIZE: usize = 1024 * 4; // 4096 バイト = 2048 サンプル (16kHzで約128ms)
     let mut buffer = vec![0u8; BUFFER_SIZE]; // スタックオーバーフローを避けるためVecでヒープ領域（RAM）に確保
 
-    // 人間の音声，笛に適した検出器として，Hann窓をかけたFFTベースのピッチ検出器を用いる
-    let mut detector = HannedFftDetector::default();
+    log::info!("Initialization complete, entering main loop...");
 
     // メインループ
     loop {
@@ -71,14 +71,14 @@ fn main() {
             total_read += bytes_read;
         }
 
-        // 16bit(2バイト)のリトルエンディアンPCMデータとして解釈してf64に変換
-        // PDMの音声データが内部チップで16bit PCMに変換されている
+        // 受信したバッファのデータを16bit PCMとして解釈し，f64のベクタに変換
         let mut buff_f64 = buffer
             .chunks_exact(2)
             .map(|chunk| {
-                // XIAO ESP32S3のマイクは音が小さい傾向があるため、入力時点でデジタル的にゲインをかける(x4倍)
-                // 各種ピッチ計算ライブラリが想定しやすいように、最大振幅を基準に [-1.0, 1.0] に正規化
+                // PDMの音声データが内部チップで16bit PCMに変換されているので，
+                // 16bit(2バイト)のリトルエンディアンPCMデータとして解釈してf64に変換
                 let val = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
+                // XIAO ESP32S3 SenseのMEMSマイクは音が小さい傾向があるためx4倍のゲインをかけた上，一応[-1.0, 1.0] に正規化
                 (val * 4.0) / 32768.0
             })
             .collect::<Vec<f64>>();
@@ -91,7 +91,7 @@ fn main() {
 
         // マイクの入力レベル確認用RMS 範囲 [-1.0, 1.0]
         let rms = (buff_f64.iter().map(|&x| x * x).sum::<f64>() / buff_f64.len() as f64).sqrt();
-        println!("RMS: {:.4}", rms);
+        log::info!("RMS: {:.4}", rms);
 
         let threshold = 0.01; // 無音判断用RMS閾値
         if rms > threshold {
@@ -105,18 +105,19 @@ fn main() {
                 },
             ) {
                 Some(note) => {
-                    println!(
+                    log::info!(
                         "Detected note: {:?}, freq: {:.2}Hz",
-                        note.note_name, note.actual_freq
+                        note.note_name,
+                        note.actual_freq
                     );
                     keyboard.write(&format!("{}", note.note_name));
                 }
                 None => {
-                    println!("Pitch was not detected")
+                    log::error!("Pitch was not detected")
                 }
             }
         } else {
-            println!("Silence...");
+            log::info!("Silence...");
         }
     }
 }
