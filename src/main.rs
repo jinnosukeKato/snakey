@@ -59,6 +59,12 @@ fn main() {
 
     // メインループ
     loop {
+        if !keyboard.connected() {
+            log::info!("Waiting for BLE connection...");
+            esp_idf_svc::hal::delay::Ets::delay_ms(500);
+            continue;
+        }
+
         // バッファがいっぱいになるまで継続的にチャンクを受信する
         let mut total_read = 0;
         while total_read < BUFFER_SIZE {
@@ -91,7 +97,7 @@ fn main() {
 
         // マイクの入力レベル確認用RMS 範囲 [-1.0, 1.0]
         let rms = (buff_f64.iter().map(|&x| x * x).sum::<f64>() / buff_f64.len() as f64).sqrt();
-        log::info!("RMS: {:.4}", rms);
+        // log::info!("RMS: {:.4}", rms);
 
         let threshold = 0.01; // 無音判断用RMS閾値
         if rms > threshold {
@@ -106,18 +112,20 @@ fn main() {
             ) {
                 Some(note) => {
                     log::info!(
-                        "Detected note: {:?}, freq: {:.2}Hz",
+                        "Detected note: {}{}, freq: {:.2}Hz",
                         note.note_name,
+                        note.octave,
                         note.actual_freq
                     );
-                    keyboard.write(&format!("{}", note.note_name));
+                    keyboard.write(&format!("{}{}", note.note_name, note.octave));
                 }
                 None => {
-                    log::error!("Pitch was not detected")
+                    log::error!("Pitch was not detected");
                 }
             }
+            esp_idf_svc::hal::delay::Ets::delay_ms(50);
         } else {
-            log::info!("Silence...");
+            // log::info!("Silence...");
         }
     }
 }
