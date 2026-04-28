@@ -10,6 +10,9 @@ use esp_idf_svc::hal::{
 };
 use pitch_detector::{note::detect_note_in_range, pitch::HannedFftDetector};
 
+mod keyboard;
+use keyboard::Keyboard;
+
 fn main() {
     // It is necessary to call this function once. Otherwise, some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
@@ -22,6 +25,7 @@ fn main() {
 
     let peripherals = Peripherals::take().expect("Failed to take peripherals");
 
+    // PDMマイクの初期化
     const SAMPLE_RATE: u32 = 16_000;
     let mut pdm_driver = I2sDriver::new_pdm_rx(
         peripherals.i2s0,
@@ -42,6 +46,9 @@ fn main() {
     pdm_driver
         .rx_enable()
         .expect("Failed to enable I2S RX channel");
+
+    // BLEキーボードの初期化
+    let mut keyboard = Keyboard::new().expect("Failed to initialize BLE keyboard");
 
     // バッファの設定
     const BUFFER_SIZE: usize = 1024 * 4; // 4096 バイト = 2048 サンプル (16kHzで約128ms)
@@ -97,10 +104,13 @@ fn main() {
                     end: 2000.0,
                 },
             ) {
-                Some(note) => println!(
-                    "Detected note: {:?}, freq: {:.2}Hz",
-                    note.note_name, note.actual_freq
-                ),
+                Some(note) => {
+                    println!(
+                        "Detected note: {:?}, freq: {:.2}Hz",
+                        note.note_name, note.actual_freq
+                    );
+                    keyboard.write(&format!("{}", note.note_name));
+                }
                 None => {
                     println!("Pitch was not detected")
                 }

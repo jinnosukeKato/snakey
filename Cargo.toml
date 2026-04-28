@@ -23,6 +23,9 @@ esp-idf-svc = { version = "0.52.1", features = ["critical-section", "embassy-tim
 # Remove `generic-queue-8` if you plan to use `embassy-time` WITH `embassy-executor`
 embassy-time = { version = "0.5", features = ["generic-queue-8"] }
 pitch-detector = "0.3.1"
+esp32-nimble = "0.12.0"
+zerocopy = "0.8.48"
+zerocopy-derive = "0.8.48"
 
 [build-dependencies]
 embuild = "0.33"
