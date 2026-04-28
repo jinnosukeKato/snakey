@@ -1,5 +1,11 @@
 use std::ops::Range;
 
+use embedded_graphics::{
+    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
+    pixelcolor::BinaryColor,
+    prelude::*,
+    text::{Baseline, Text},
+};
 use esp_idf_svc::hal::{
     i2s::config::{
         Config, DataBitWidth, PdmRxClkConfig, PdmRxConfig, PdmRxGpioConfig, PdmRxSlotConfig,
@@ -7,8 +13,10 @@ use esp_idf_svc::hal::{
     },
     i2s::I2sDriver,
     peripherals::Peripherals,
+    units::Hertz,
 };
 use pitch_detector::{note::detect_note_in_range, pitch::HannedFftDetector};
+use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 
 mod keyboard;
 use keyboard::Keyboard;
@@ -27,6 +35,25 @@ fn main() {
 
     // ペリフェラルの取得
     let peripherals = Peripherals::take().expect("Failed to take peripherals");
+
+    // OLEDディスプレイの初期化
+    let i2c = esp_idf_svc::hal::i2c::I2cDriver::new(
+        peripherals.i2c0,
+        peripherals.pins.gpio5,
+        peripherals.pins.gpio6,
+        &esp_idf_svc::hal::i2c::config::Config::default().baudrate(Hertz(400_000)),
+    )
+    .expect("Failed to create I2C driver");
+
+    let i2c_disp_if = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(i2c_disp_if, DisplaySize128x64, DisplayRotation::Rotate0)
+        .into_buffered_graphics_mode();
+    display.init().expect("Failed to initialize display");
+
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
+        .build();
 
     // PDMマイクの初期化
     const SAMPLE_RATE: u32 = 16_000;
@@ -117,6 +144,19 @@ fn main() {
                         note.octave,
                         note.actual_freq
                     );
+
+                    display
+                        .clear(BinaryColor::Off)
+                        .expect("Failed to clear display");
+                    let disp_text = format!(
+                        "{}{}, {:.2}Hz",
+                        note.note_name, note.octave, note.actual_freq
+                    );
+                    Text::with_baseline(&disp_text, Point::zero(), text_style, Baseline::Top)
+                        .draw(&mut display)
+                        .expect("Failed to draw text");
+                    display.flush().expect("Failed to flush text to display");
+
                     keyboard.write(&format!("{}{}", note.note_name, note.octave));
                 }
                 None => {
