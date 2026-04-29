@@ -126,8 +126,8 @@ fn main() {
         let rms = (buff_f64.iter().map(|&x| x * x).sum::<f64>() / buff_f64.len() as f64).sqrt();
         // log::info!("RMS: {:.4}", rms);
 
-        let threshold = 0.01; // 無音判断用RMS閾値
-        if rms > threshold {
+        const THRESHOLD: f64 = 0.01; // 無音判断用RMS閾値
+        if rms > THRESHOLD {
             match detect_note_in_range(
                 &buff_f64,
                 &mut detector,
