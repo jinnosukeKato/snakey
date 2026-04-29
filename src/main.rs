@@ -15,7 +15,9 @@ use esp_idf_svc::hal::{
     peripherals::Peripherals,
     units::Hertz,
 };
-use pitch_detector::{note::detect_note_in_range, pitch::HannedFftDetector};
+use pitch_detector::{
+    note::detect_note_in_range, note::NoteDetectionResult, pitch::HannedFftDetector,
+};
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 
 mod keyboard;
@@ -157,9 +159,25 @@ fn main() {
                     Text::with_baseline(&disp_text, Point::zero(), text_style, Baseline::Top)
                         .draw(&mut display)
                         .expect("Failed to draw text");
-                    display.flush().expect("Failed to flush text to display");
 
-                    keyboard.write(&format!("{}{}", note.note_name, note.octave));
+                    match get_char_from_note(&note) {
+                        Some(c) => {
+                            log::info!("Mapped to key: '{}'", c);
+                            Text::with_baseline(
+                                &format!("Key: '{}'", c),
+                                Point::new(0, 16),
+                                text_style,
+                                Baseline::Top,
+                            )
+                            .draw(&mut display)
+                            .expect("Failed to draw text");
+                            keyboard.write(&c.to_string());
+                        }
+                        None => {
+                            log::error!("No valid key mapping for detected note");
+                        }
+                    }
+                    display.flush().expect("Failed to flush text to display");
                 }
                 None => {
                     log::error!("Pitch was not detected");
@@ -169,5 +187,35 @@ fn main() {
         } else {
             // log::info!("Silence...");
         }
+    }
+}
+
+fn get_char_from_note(note: &NoteDetectionResult) -> Option<char> {
+    let note_num = match note.note_name.to_string().as_str() {
+        "C" => 0,
+        "C#" | "Db" => 1,
+        "D" => 2,
+        "D#" | "Eb" => 3,
+        "E" => 4,
+        "F" => 5,
+        "F#" | "Gb" => 6,
+        "G" => 7,
+        "G#" | "Ab" => 8,
+        "A" => 9,
+        "A#" | "Bb" => 10,
+        "B" => 11,
+        _ => return None,
+    };
+    let octave = note.octave;
+
+    // OFFSET=3のとき，C2だと(2+3)*12=60
+    // C4だと(4+3)*12=84
+    // ASCIIのprintableは32-126だから全然足りない
+    const OFFSET: i32 = 3;
+    let midi_num = ((octave + OFFSET) * 12 + note_num) as u32;
+    let key = char::from_u32(midi_num);
+    match key {
+        Some(k) if k.is_ascii_alphanumeric() => Some(k),
+        _ => None,
     }
 }
