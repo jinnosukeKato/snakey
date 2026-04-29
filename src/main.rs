@@ -149,8 +149,10 @@ fn main() {
                         .clear(BinaryColor::Off)
                         .expect("Failed to clear display");
                     let disp_text = format!(
-                        "{}{}, {:.2}Hz",
-                        note.note_name, note.octave, note.actual_freq
+                        "{:<2}{}, {:.2}Hz",
+                        note.note_name.to_string(),
+                        note.octave,
+                        note.actual_freq
                     );
                     Text::with_baseline(&disp_text, Point::zero(), text_style, Baseline::Top)
                         .draw(&mut display)
